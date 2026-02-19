@@ -100,6 +100,19 @@ State is saved to `~/.openclaw-manager/<agent-name>/state.json`.
 | `templates/agent-config.yaml` | Example agent configuration |
 | `templates/SOUL.md` | Default personality template |
 
+## DigitalOcean API Token Scopes
+
+When creating a DO API token, you need these scopes:
+
+| Scope | Permissions | Why |
+|-------|-------------|-----|
+| **Droplet** | create, read, update, delete, admin | Create and manage agent droplets |
+| **SSH Key** | read (minimum) | List SSH keys to inject into new droplets |
+
+> **Note:** When you click "Create Token", DigitalOcean may prompt you to add additional required permissions. Accept those -- they are dependencies of the scopes above.
+
+The `account:read` scope is **not** required. The manager verifies auth by listing SSH keys instead.
+
 ## Security Notes
 
 - Secrets are stored in 1Password, not on disk

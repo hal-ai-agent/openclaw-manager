@@ -60,8 +60,8 @@ else
 fi
 
 # Check doctl auth
-if doctl account get --format Email --no-header &>/dev/null 2>&1; then
-    DOCTL_EMAIL=$(doctl account get --format Email --no-header 2>/dev/null)
+if doctl compute ssh-key list --no-header &>/dev/null 2>&1; then
+    DOCTL_EMAIL="authenticated"
     ok "doctl authenticated as ${DOCTL_EMAIL}"
 else
     warn "doctl not authenticated. Run: doctl auth init"

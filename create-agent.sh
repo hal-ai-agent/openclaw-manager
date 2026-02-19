@@ -161,7 +161,7 @@ command -v ssh   &>/dev/null || die "ssh not found"
 ensure_yq
 
 # Verify auth
-doctl account get --format Email --no-header &>/dev/null || die "doctl not authenticated. Run: doctl auth init"
+doctl compute ssh-key list --no-header &>/dev/null || die "doctl not authenticated or missing permissions. Run: doctl auth init"
 ok "doctl authenticated"
 
 op whoami &>/dev/null || die "op not authenticated. Run: op signin"
