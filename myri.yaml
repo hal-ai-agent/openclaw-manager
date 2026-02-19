@@ -1,0 +1,17 @@
+name: Myri
+hostname: myri-openclaw
+region: nyc3
+size: s-1vcpu-2gb
+model: anthropic/claude-opus-4-6
+vault: AI-Agents
+secrets:
+  anthropic_api_key: "Myri - Anthropic API Key"
+  telegram_bot_token: "Myri - Telegram Bot Token"
+channels:
+  telegram:
+    bot_name: "Myri"
+    bot_username: myri_dimagi_bot
+test_prompt: "Say hello in 3 words"
+pair_with:
+  - "7766739556"
+  - "6426163751"

@@ -1,0 +1,17 @@
+name: Dot
+hostname: dot-openclaw
+region: nyc3
+size: s-1vcpu-2gb
+model: anthropic/claude-opus-4-6
+vault: AI-Agents
+secrets:
+  anthropic_api_key: "Dot - Anthropic API Key"
+  telegram_bot_token: "Dot - Telegram Bot Token"
+channels:
+  telegram:
+    bot_name: "Dot"
+    bot_username: dot_dimagi_bot
+test_prompt: "Say hello in 3 words"
+pair_with:
+  - "7766739556"
+  - "8066834830"

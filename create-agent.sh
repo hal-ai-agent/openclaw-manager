@@ -180,14 +180,17 @@ SIZE="$(cfg '.size')"
 SSH_KEY_NAME="$(cfg '.ssh_key_name')"
 MODEL="$(cfg '.model')"
 VAULT="$(cfg '.vault')"
-ANTHROPIC_KEY_ITEM="$(cfg '.anthropic_key_item')"
-PAIR_WITH="$(cfg '.pair_with')"
+# Secrets (1Password item names)
+ANTHROPIC_KEY_ITEM="$(cfg '.secrets.anthropic_api_key')"
+TG_BOT_TOKEN_ITEM="$(cfg '.secrets.telegram_bot_token')"
+
+# pair_with can be a string or array; flatten to comma-separated
+PAIR_WITH="$(yq -r '.pair_with // [] | join(",")' "$CONFIG_FILE")"
 TEST_PROMPT="$(cfg '.test_prompt')"
 
 # Channels
 TG_BOT_NAME="$(cfg '.channels.telegram.bot_name')"
 TG_BOT_USERNAME="$(cfg '.channels.telegram.bot_username')"
-TG_BOT_TOKEN_ITEM="$(cfg '.channels.telegram.bot_token_item')"
 GMAIL_EMAIL="$(cfg '.channels.gmail.email')"
 GMAIL_GCP_PROJECT="$(cfg '.channels.gmail.gcp_project')"
 
@@ -212,62 +215,48 @@ cp "$CONFIG_FILE" "${STATE_DIR}/${AGENT_NAME}/config.yaml"
 # ---------------------------------------------------------------------------
 # Step 2: Resolve SSH key
 # ---------------------------------------------------------------------------
-step "Step 2: Resolve SSH key"
+step "Step 2: Generate SSH key for ${AGENT_NAME}"
 
-if [[ -n "$SSH_KEY_NAME" ]]; then
-    SSH_KEY_ID=$(doctl compute ssh-key list --format ID,Name --no-header | grep "$SSH_KEY_NAME" | awk '{print $1}')
-    [[ -n "$SSH_KEY_ID" ]] || die "SSH key '${SSH_KEY_NAME}' not found in DigitalOcean"
+SSH_KEY_FILE="$HOME/.ssh/${HOSTNAME}"
+SSH_KEY_NAME="${HOSTNAME}"
+
+if [[ -f "$SSH_KEY_FILE" ]]; then
+    ok "SSH key already exists: ${SSH_KEY_FILE}"
 else
-    # Auto-detect: use first available key
-    SSH_KEY_ID=$(doctl compute ssh-key list --format ID --no-header | head -1)
-    [[ -n "$SSH_KEY_ID" ]] || die "No SSH keys found in DigitalOcean. Add one first."
-    SSH_KEY_NAME=$(doctl compute ssh-key get "$SSH_KEY_ID" --format Name --no-header)
+    ssh-keygen -t ed25519 -f "$SSH_KEY_FILE" -N "" -C "$HOSTNAME" >/dev/null 2>&1
+    ok "Generated SSH key: ${SSH_KEY_FILE}"
 fi
-ok "Using SSH key: ${SSH_KEY_NAME} (${SSH_KEY_ID})"
+
+# Check if key already registered in DO
+SSH_KEY_ID=$(doctl compute ssh-key list --format ID,Name --no-header 2>/dev/null | grep "$SSH_KEY_NAME" | awk '{print $1}' || true)
+if [[ -n "$SSH_KEY_ID" ]]; then
+    ok "SSH key already in DigitalOcean: ${SSH_KEY_NAME} (${SSH_KEY_ID})"
+else
+    SSH_KEY_ID=$(doctl compute ssh-key create "$SSH_KEY_NAME" \
+        --public-key "$(cat "${SSH_KEY_FILE}.pub")" \
+        --format ID --no-header 2>&1)
+    [[ -n "$SSH_KEY_ID" ]] || die "Failed to register SSH key with DigitalOcean"
+    ok "Registered SSH key in DigitalOcean: ${SSH_KEY_NAME} (${SSH_KEY_ID})"
+fi
+
+# SSH options used for all remote commands
+SSH_OPTS="-o StrictHostKeyChecking=no -o BatchMode=yes -i ${SSH_KEY_FILE}"
 
 # ---------------------------------------------------------------------------
 # Step 3: Resolve Anthropic API key from 1Password
 # ---------------------------------------------------------------------------
 step "Step 3: Resolve secrets from 1Password"
 
-if [[ -n "$ANTHROPIC_KEY_ITEM" ]]; then
-    ANTHROPIC_KEY=$(op_read_credential "$ANTHROPIC_KEY_ITEM")
-else
-    # Try common names
-    ANTHROPIC_KEY=$(op_read_credential "Hal - Anthropic API Key (Scout)" 2>/dev/null || true)
-    if [[ -z "$ANTHROPIC_KEY" ]]; then
-        ANTHROPIC_KEY=$(op item list --vault="${VAULT}" --format=json 2>/dev/null | \
-            jq -r '.[] | select(.title | test("anthropic"; "i")) | .title' | head -1)
-        if [[ -n "$ANTHROPIC_KEY" ]]; then
-            ANTHROPIC_KEY=$(op_read_credential "$ANTHROPIC_KEY")
-        fi
-    fi
-fi
+[[ -n "$ANTHROPIC_KEY_ITEM" ]] || die "secrets.anthropic_api_key is required in config"
+ANTHROPIC_KEY=$(op_read_credential "$ANTHROPIC_KEY_ITEM")
+[[ -n "$ANTHROPIC_KEY" ]] || die "Could not read '$ANTHROPIC_KEY_ITEM' from vault '$VAULT'"
+ok "anthropic_api_key → '$ANTHROPIC_KEY_ITEM'"
 
-if [[ -z "$ANTHROPIC_KEY" ]]; then
-    echo ""
-    read -rp "  Enter Anthropic API key (or 1Password item name): " ANTHROPIC_KEY
-    if op item get "$ANTHROPIC_KEY" --vault="${VAULT}" &>/dev/null 2>&1; then
-        ANTHROPIC_KEY=$(op_read_credential "$ANTHROPIC_KEY")
-    fi
-fi
-
-[[ -n "$ANTHROPIC_KEY" ]] || die "Anthropic API key is required"
-ok "Anthropic API key resolved"
-
-# Resolve Telegram bot token if configured
 TG_TOKEN=""
-if [[ -n "$TG_BOT_USERNAME" || -n "$TG_BOT_TOKEN_ITEM" ]]; then
-    if [[ -n "$TG_BOT_TOKEN_ITEM" ]]; then
-        TG_TOKEN=$(op_read_credential "$TG_BOT_TOKEN_ITEM")
-    fi
-    if [[ -z "$TG_TOKEN" ]]; then
-        echo ""
-        info "Telegram bot token needed."
-        info "Create a bot via @BotFather on Telegram, then enter the token."
-        read -rp "  Telegram bot token: " TG_TOKEN
-    fi
-    [[ -n "$TG_TOKEN" ]] || warn "No Telegram token -- skipping Telegram setup"
+if [[ -n "$TG_BOT_TOKEN_ITEM" ]]; then
+    TG_TOKEN=$(op_read_credential "$TG_BOT_TOKEN_ITEM")
+    [[ -n "$TG_TOKEN" ]] || die "Could not read '$TG_BOT_TOKEN_ITEM' from vault '$VAULT'"
+    ok "telegram_bot_token → '$TG_BOT_TOKEN_ITEM'"
 fi
 
 # ---------------------------------------------------------------------------
@@ -305,7 +294,7 @@ fi
 # Wait for SSH
 info "Waiting for SSH..."
 for i in $(seq 1 30); do
-    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o BatchMode=yes "root@${DROPLET_IP}" "echo ready" &>/dev/null; then
+    if ssh -o ConnectTimeout=5 ${SSH_OPTS} "root@${DROPLET_IP}" "echo ready" &>/dev/null; then
         ok "SSH ready"
         break
     fi
@@ -324,11 +313,23 @@ if [[ "$INSTALL_DONE" == "true" ]]; then
     ok "OpenClaw already installed (resuming)"
 else
     # Upload and run the droplet setup inline (minimal -- no interactive prompts)
-    ssh -o StrictHostKeyChecking=no "root@${DROPLET_IP}" bash -s <<'REMOTE_INSTALL'
+    ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<'REMOTE_INSTALL'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 export NODE_OPTIONS="--max-old-space-size=900"
 
+# Wait for any background apt processes to finish
+wait_for_apt() {
+    local tries=0
+    while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+        if [[ $tries -eq 0 ]]; then echo ">>> Waiting for apt lock..."; fi
+        sleep 5
+        tries=$((tries + 1))
+        [[ $tries -lt 60 ]] || { echo "ERROR: apt lock timeout"; exit 1; }
+    done
+}
+
+wait_for_apt
 echo ">>> Updating system..."
 apt-get update -qq && apt-get upgrade -y -qq
 
@@ -349,12 +350,14 @@ fi
 
 # Tailscale
 if ! command -v tailscale &>/dev/null; then
+    wait_for_apt
     echo ">>> Installing Tailscale..."
     curl -fsSL https://tailscale.com/install.sh | sh
 fi
 
 # OpenClaw
 if ! command -v openclaw &>/dev/null; then
+    wait_for_apt
     echo ">>> Installing OpenClaw..."
     set +e
     curl -fsSL https://openclaw.ai/install.sh | bash
@@ -365,7 +368,7 @@ command -v openclaw &>/dev/null && echo "OPENCLAW_INSTALLED" || echo "OPENCLAW_F
 REMOTE_INSTALL
 
     # Verify
-    VERIFY=$(ssh -o StrictHostKeyChecking=no "root@${DROPLET_IP}" "openclaw --version 2>/dev/null || echo FAILED")
+    VERIFY=$(ssh ${SSH_OPTS} "root@${DROPLET_IP}" "openclaw --version 2>/dev/null || echo FAILED")
     if [[ "$VERIFY" == "FAILED" ]]; then
         die "OpenClaw installation failed"
     fi
@@ -384,42 +387,105 @@ CONFIG_DONE="$(get_state 'config_done')"
 if [[ "$CONFIG_DONE" == "true" ]]; then
     ok "OpenClaw already configured (resuming)"
 else
-    # Generate a Django-style secret key for the gateway
-    GATEWAY_SECRET=$(openssl rand -base64 48 | tr -d '\n/+=')
-
-    # Run onboarding non-interactively by writing config directly
-    ssh -o StrictHostKeyChecking=no "root@${DROPLET_IP}" bash -s <<REMOTE_CONFIG
+    # Write config directly — openclaw onboard hangs in non-TTY
+    ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<REMOTE_CONFIG
 set -euo pipefail
 export NODE_OPTIONS="--max-old-space-size=900"
 
-# Create config directory
-mkdir -p ~/.openclaw
+# Create required directories
+mkdir -p ~/.openclaw/workspace ~/.openclaw/agents/main/agent ~/.openclaw/agents/main/sessions ~/.openclaw/credentials
 
-# Run onboarding with --install-daemon to set up systemd
-# This will prompt -- we pipe answers
-echo ">>> Running onboarding..."
-openclaw onboard --install-daemon <<EOF_ONBOARD || true
-1
-${ANTHROPIC_KEY}
-y
-EOF_ONBOARD
+# Generate gateway token
+GATEWAY_TOKEN=\$(openssl rand -hex 24)
 
-# Patch the config with our model preference
-if [[ -f ~/.openclaw/openclaw.json ]]; then
-    # Use node to patch JSON (jq may not be installed)
+# Write minimal valid config if it doesn't exist
+if [[ ! -f ~/.openclaw/openclaw.json ]]; then
     node -e "
-      const fs = require('fs');
-      const cfg = JSON.parse(fs.readFileSync('/root/.openclaw/openclaw.json', 'utf8'));
-      cfg.defaultModel = '${MODEL}';
-      fs.writeFileSync('/root/.openclaw/openclaw.json', JSON.stringify(cfg, null, 2));
-    " 2>/dev/null || true
+const fs = require('fs');
+const cfg = {
+  meta: { version: 1 },
+  wizard: { completed: true },
+  auth: {},
+  agents: {
+    defaults: {
+      workspace: '/root/.openclaw/workspace',
+      contextPruning: { mode: 'cache-ttl', ttl: '1h' },
+      compaction: { mode: 'safeguard' },
+      heartbeat: { every: '30m' },
+      maxConcurrent: 4,
+      subagents: { maxConcurrent: 8 }
+    }
+  },
+  messages: {},
+  commands: {},
+  hooks: {},
+  channels: {},
+  gateway: {
+    port: 18789,
+    mode: 'local',
+    bind: 'loopback',
+    auth: { mode: 'token', token: '\${GATEWAY_TOKEN}' },
+    tailscale: { mode: 'off', resetOnExit: false },
+    nodes: { denyCommands: ['camera.snap','camera.clip','screen.record'] }
+  },
+  plugins: {}
+};
+fs.writeFileSync('/root/.openclaw/openclaw.json', JSON.stringify(cfg, null, 2));
+console.log('Config written');
+"
+fi
+
+# Write auth profile with Anthropic API key
+node -e "
+const fs = require('fs');
+const path = '/root/.openclaw/agents/main/agent/auth-profiles.json';
+const profiles = {
+  version: 1,
+  profiles: {
+    'anthropic:default': {
+      type: 'api_key',
+      provider: 'anthropic',
+      key: '${ANTHROPIC_KEY}'
+    }
+  }
+};
+fs.writeFileSync(path, JSON.stringify(profiles, null, 2), { mode: 0o600 });
+console.log('Auth profile written');
+"
+
+# Set default model
+openclaw models set '${MODEL}' 2>&1
+
+# Install and enable systemd service
+openclaw gateway install 2>&1 || true
+loginctl enable-linger root 2>/dev/null || true
+
+# Start gateway and verify auth works
+openclaw gateway start 2>&1 || true
+sleep 5
+
+# Verify the API key is usable by hitting the Anthropic API directly
+if curl -sf -o /dev/null https://api.anthropic.com/v1/messages \
+  -H "x-api-key: ${ANTHROPIC_KEY}" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-20250514","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}'; then
+    echo "AUTH_VERIFIED"
+else
+    echo "AUTH_FAILED: Anthropic API key is invalid or unreachable" >&2
+    exit 1
 fi
 
 echo "CONFIG_DONE"
 REMOTE_CONFIG
 
+    # Check remote output for auth verification
+    if echo "$REMOTE_OUTPUT" | grep -q "AUTH_FAILED"; then
+        die "Anthropic API key verification failed on remote host"
+    fi
+
     set_state "config_done" "true"
-    ok "OpenClaw configured with model: ${MODEL}"
+    ok "OpenClaw configured with model: ${MODEL} (API key verified)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -432,22 +498,30 @@ if [[ -n "$TG_TOKEN" ]]; then
     if [[ "$TG_DONE" == "true" ]]; then
         ok "Telegram already configured (resuming)"
     else
-        ssh -o StrictHostKeyChecking=no "root@${DROPLET_IP}" bash -s <<REMOTE_TG
+        # Build allowFrom JSON array from PAIR_WITH
+        ALLOW_FROM_JSON="[]"
+        if [[ -n "$PAIR_WITH" ]]; then
+            ALLOW_FROM_JSON=$(echo "$PAIR_WITH" | tr ',' '\n' | jq -R . | jq -s .)
+        fi
+
+        ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<REMOTE_TG
 set -euo pipefail
 export NODE_OPTIONS="--max-old-space-size=900"
 
-# Enable telegram plugin and add token
-openclaw plugins enable telegram 2>/dev/null || true
-openclaw channels add --channel telegram --token "${TG_TOKEN}" 2>/dev/null || true
+# Configure Telegram via config set (no interactive prompts)
+openclaw config set channels.telegram.enabled true 2>&1
+openclaw config set channels.telegram.botToken '${TG_TOKEN}' 2>&1
+openclaw config set channels.telegram.dmPolicy allowlist 2>&1
+openclaw config set channels.telegram.allowFrom '${ALLOW_FROM_JSON}' 2>&1
 
 echo "TELEGRAM_DONE"
 REMOTE_TG
 
         set_state "telegram_done" "true"
         ok "Telegram configured"
-
-        # Store token in 1Password
-        op_create_item "Telegram Bot Token (${TG_BOT_USERNAME:-telegram})" "$TG_TOKEN" --tags="${AGENT_NAME_LOWER},telegram"
+        if [[ -n "$PAIR_WITH" ]]; then
+            ok "Pre-approved users: ${PAIR_WITH}"
+        fi
     fi
 fi
 
@@ -493,7 +567,7 @@ if [[ -z "$SOUL_SOURCE" ]]; then
 fi
 
 if [[ -f "$SOUL_SOURCE" ]]; then
-    scp -o StrictHostKeyChecking=no "$SOUL_SOURCE" "root@${DROPLET_IP}:/root/.openclaw/workspace/SOUL.md"
+    scp -o StrictHostKeyChecking=no -i ${SSH_KEY_FILE} "$SOUL_SOURCE" "root@${DROPLET_IP}:/root/.openclaw/workspace/SOUL.md"
     ok "Uploaded SOUL.md"
 fi
 
@@ -502,7 +576,7 @@ for key in agents tools user identity; do
     FILE_PATH="$(cfg ".workspace_files.${key}")"
     if [[ -n "$FILE_PATH" && -f "$FILE_PATH" ]]; then
         DEST_NAME="$(echo "$key" | tr '[:lower:]' '[:upper:]').md"
-        scp -o StrictHostKeyChecking=no "$FILE_PATH" "root@${DROPLET_IP}:/root/.openclaw/workspace/${DEST_NAME}"
+        scp -o StrictHostKeyChecking=no -i ${SSH_KEY_FILE} "$FILE_PATH" "root@${DROPLET_IP}:/root/.openclaw/workspace/${DEST_NAME}"
         ok "Uploaded ${DEST_NAME}"
     fi
 done
@@ -517,10 +591,8 @@ SECRETS_DONE="$(get_state 'secrets_done')"
 if [[ "$SECRETS_DONE" == "true" ]]; then
     ok "Secrets already stored (resuming)"
 else
-    # Store Anthropic key for this agent
-    op_create_item "Anthropic API Key" "$ANTHROPIC_KEY" --tags="${AGENT_NAME_LOWER},anthropic" 2>/dev/null || true
-
-    # Store droplet info as a secure note
+    # Secrets (Anthropic key, Telegram token) are already in 1Password.
+    # Just store droplet info as a secure note.
     op item create \
         --category=secureNote \
         --title="${AGENT_NAME} - Droplet Info" \
@@ -545,17 +617,17 @@ fi
 step "Step 11: Verify agent"
 
 info "Starting gateway..."
-ssh -o StrictHostKeyChecking=no "root@${DROPLET_IP}" bash -s <<'REMOTE_VERIFY'
+ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<'REMOTE_VERIFY'
 export NODE_OPTIONS="--max-old-space-size=900"
-# Ensure gateway is running
-systemctl --user start openclaw-gateway 2>/dev/null || openclaw gateway start 2>/dev/null || true
-sleep 5
+# Restart gateway to pick up all config changes
+openclaw gateway restart 2>&1 || openclaw gateway start 2>&1 || true
+sleep 8
 openclaw status 2>&1 || echo "STATUS_UNKNOWN"
 REMOTE_VERIFY
 
 if [[ -n "$TEST_PROMPT" ]]; then
     info "Testing with prompt: ${TEST_PROMPT}"
-    RESPONSE=$(ssh -o StrictHostKeyChecking=no "root@${DROPLET_IP}" \
+    RESPONSE=$(ssh ${SSH_OPTS} "root@${DROPLET_IP}" \
         "export NODE_OPTIONS='--max-old-space-size=900'; timeout 30 openclaw agent -m '${TEST_PROMPT}' --agent main 2>&1" || true)
     if [[ -n "$RESPONSE" && "$RESPONSE" != *"error"* && "$RESPONSE" != *"Error"* ]]; then
         ok "Agent responded: ${RESPONSE}"
@@ -580,7 +652,7 @@ info "1Password: ${VAULT} (prefix: ${AGENT_NAME} -)"
 [[ -n "$TG_TOKEN" ]] && info "Telegram:  @${TG_BOT_USERNAME:-configured}"
 [[ -n "$GMAIL_EMAIL" ]] && info "Gmail:     ${GMAIL_EMAIL}"
 echo ""
-info "SSH:       ssh root@${DROPLET_IP}"
-info "Logs:      ssh root@${DROPLET_IP} openclaw logs --follow"
-info "Control:   ssh -L 18789:localhost:18789 root@${DROPLET_IP}"
+info "SSH:       ssh -i ${SSH_KEY_FILE} root@${DROPLET_IP}"
+info "Logs:      ssh -i ${SSH_KEY_FILE} root@${DROPLET_IP} openclaw logs --follow"
+info "Control:   ssh -i ${SSH_KEY_FILE} -L 18789:localhost:18789 root@${DROPLET_IP}"
 echo ""
