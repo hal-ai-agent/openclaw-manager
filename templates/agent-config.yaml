@@ -1,44 +1,51 @@
-# Agent Configuration
-# -------------------
-# This file defines a new OpenClaw agent to provision.
-# The manager reads this file and creates everything needed.
+# ============================================================
+# OpenClaw Agent Configuration
+# ============================================================
+#
+# Fill this in, then run:  ./create-agent.sh this-file.yaml
+#
+# Required fields: name
+# Everything else has sensible defaults.
+# Delete any channel section you don't need.
+# ============================================================
 
-# Identity
-name: Eva                          # Agent name (used for 1Password prefixes, hostname, etc.)
-hostname: openclaw-eva             # Droplet hostname
+# --- Identity (required) ---
+name: Eva                           # Agent name (used everywhere: hostname, 1Password, etc.)
 
-# Infrastructure
-region: nyc3                       # DigitalOcean region (nyc1, nyc3, sfo3, lon1, ams3, sgp1, fra1)
-size: s-1vcpu-2gb                  # Droplet size (s-1vcpu-1gb = $6/mo, s-1vcpu-2gb = $12/mo)
-ssh_key_name: ""                   # DO SSH key name (leave empty to auto-detect or create)
+# --- Infrastructure ---
+# hostname: openclaw-eva            # Default: openclaw-<name lowercase>
+# region: nyc3                      # Default: nyc3. Options: nyc1 nyc3 sfo3 lon1 ams3 sgp1 fra1
+# size: s-1vcpu-2gb                 # Default: s-1vcpu-2gb ($12/mo). Cheapest: s-1vcpu-1gb ($6/mo)
+# ssh_key_name: ""                  # Default: auto-detect first key in DigitalOcean
 
-# AI Model
-model: anthropic/claude-sonnet-4-20250514   # Default model for the agent
+# --- AI Model ---
+# model: anthropic/claude-sonnet-4-20250514
 
-# 1Password
-vault: AI-Agents                   # 1Password vault for storing agent secrets
-anthropic_key_item: ""             # 1Password item name for Anthropic key (leave empty to use shared key)
+# --- 1Password ---
+# vault: AI-Agents                  # Default: AI-Agents
+# anthropic_key_item: ""            # Default: auto-find any item with "anthropic" in title
 
-# Channels (comment out to skip)
+# --- Telegram ---
+# Create a bot first: message @BotFather on Telegram, send /newbot
+# The script will prompt you for the token if not in 1Password.
 channels:
   telegram:
-    bot_name: ""                   # Telegram bot display name (e.g., "Eva AI")
-    bot_username: ""               # Telegram bot username (e.g., "eva_dimagi_bot")
-    # If bot_token is empty, you must create the bot via @BotFather first
-    # and store the token in 1Password as "<name> - Telegram Bot Token"
-    bot_token_item: ""             # 1Password item name (leave empty to prompt)
+    bot_name: "Eva AI"              # Display name (for your reference)
+    bot_username: eva_dimagi_bot    # The @username from BotFather
+  # bot_token_item: ""              # 1Password item title if token already stored
 
-  gmail:
-    email: ""                      # Gmail address for the agent (e.g., "eva@dimagi-ai.com")
-    gcp_project: ""                # Google Cloud project ID for Pub/Sub
-    # Gmail requires OAuth -- the manager will guide you through gog auth
+# --- Gmail (optional, requires interactive OAuth) ---
+#  gmail:
+#    email: eva@example.com
+#    gcp_project: my-gcp-project
 
-# Workspace files (optional -- paths to files to copy into the agent's workspace)
-workspace_files:
-  # soul: ./custom-soul.md         # Custom SOUL.md (default template used if omitted)
-  # agents: ./custom-agents.md     # Custom AGENTS.md
-  # tools: ./custom-tools.md       # Custom TOOLS.md
+# --- Workspace ---
+# Custom files to upload to the agent (paths relative to this config file).
+# Default SOUL.md is used if omitted.
+# workspace_files:
+#   soul: ./my-soul.md
+#   user: ./my-user.md
 
-# Post-provision
-pair_with: ""                      # Telegram user ID to auto-pair with (e.g., "7766739556")
-test_prompt: "Say hello in 3 words"  # Prompt to verify the agent is working
+# --- Post-provision ---
+# pair_with: "7766739556"           # Telegram user ID to auto-pair with
+test_prompt: "Say hello in 3 words" # Verify the agent works after install
