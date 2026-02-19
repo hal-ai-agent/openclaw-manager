@@ -387,105 +387,48 @@ CONFIG_DONE="$(get_state 'config_done')"
 if [[ "$CONFIG_DONE" == "true" ]]; then
     ok "OpenClaw already configured (resuming)"
 else
-    # Write config directly — openclaw onboard hangs in non-TTY
-    ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<REMOTE_CONFIG
+    # Use openclaw onboard --non-interactive for proper setup (auth, config, pairing, daemon)
+    REMOTE_OUTPUT=$(ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<REMOTE_CONFIG
 set -euo pipefail
 export NODE_OPTIONS="--max-old-space-size=900"
 
-# Create required directories
-mkdir -p ~/.openclaw/workspace ~/.openclaw/agents/main/agent ~/.openclaw/agents/main/sessions ~/.openclaw/credentials
-
-# Generate gateway token
-GATEWAY_TOKEN=\$(openssl rand -hex 24)
-
-# Write minimal valid config if it doesn't exist
-if [[ ! -f ~/.openclaw/openclaw.json ]]; then
-    node -e "
-const fs = require('fs');
-const cfg = {
-  meta: { version: 1 },
-  wizard: { completed: true },
-  auth: {},
-  agents: {
-    defaults: {
-      workspace: '/root/.openclaw/workspace',
-      contextPruning: { mode: 'cache-ttl', ttl: '1h' },
-      compaction: { mode: 'safeguard' },
-      heartbeat: { every: '30m' },
-      maxConcurrent: 4,
-      subagents: { maxConcurrent: 8 }
-    }
-  },
-  messages: {},
-  commands: {},
-  hooks: {},
-  channels: {},
-  gateway: {
-    port: 18789,
-    mode: 'local',
-    bind: 'loopback',
-    auth: { mode: 'token', token: '\${GATEWAY_TOKEN}' },
-    tailscale: { mode: 'off', resetOnExit: false },
-    nodes: { denyCommands: ['camera.snap','camera.clip','screen.record'] }
-  },
-  plugins: {}
-};
-fs.writeFileSync('/root/.openclaw/openclaw.json', JSON.stringify(cfg, null, 2));
-console.log('Config written');
-"
-fi
-
-# Write auth profile with Anthropic API key
-node -e "
-const fs = require('fs');
-const path = '/root/.openclaw/agents/main/agent/auth-profiles.json';
-const profiles = {
-  version: 1,
-  profiles: {
-    'anthropic:default': {
-      type: 'api_key',
-      provider: 'anthropic',
-      key: '${ANTHROPIC_KEY}'
-    }
-  }
-};
-fs.writeFileSync(path, JSON.stringify(profiles, null, 2), { mode: 0o600 });
-console.log('Auth profile written');
-"
+openclaw onboard --non-interactive \
+  --mode local \
+  --auth-choice apiKey \
+  --anthropic-api-key '${ANTHROPIC_KEY}' \
+  --gateway-port 18789 \
+  --gateway-bind loopback \
+  --install-daemon \
+  --daemon-runtime node \
+  --skip-skills 2>&1
 
 # Set default model
 openclaw models set '${MODEL}' 2>&1
 
-# Install and enable systemd service
-openclaw gateway install 2>&1 || true
-loginctl enable-linger root 2>/dev/null || true
-
-# Start gateway and verify auth works
-openclaw gateway start 2>&1 || true
+# Verify end-to-end: send a message through the gateway
 sleep 5
-
-# Verify the API key is usable by hitting the Anthropic API directly
-if curl -sf -o /dev/null https://api.anthropic.com/v1/messages \
-  -H "x-api-key: ${ANTHROPIC_KEY}" \
-  -H "anthropic-version: 2023-06-01" \
-  -H "content-type: application/json" \
-  -d '{"model":"claude-sonnet-4-20250514","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}'; then
+if openclaw agent --message "Reply with just the word OK" --timeout 30 --json 2>&1 | grep -q '"reply"'; then
     echo "AUTH_VERIFIED"
 else
-    echo "AUTH_FAILED: Anthropic API key is invalid or unreachable" >&2
+    echo "AUTH_FAILED: Agent could not complete a turn through the gateway" >&2
     exit 1
 fi
 
 echo "CONFIG_DONE"
 REMOTE_CONFIG
+)
+    echo "$REMOTE_OUTPUT"
 
     # Check remote output for auth verification
     if echo "$REMOTE_OUTPUT" | grep -q "AUTH_FAILED"; then
-        die "Anthropic API key verification failed on remote host"
+        die "Agent failed end-to-end verification — check auth-profiles.json and gateway logs"
+    fi
+    if ! echo "$REMOTE_OUTPUT" | grep -q "AUTH_VERIFIED"; then
+        die "Verification step did not complete — check remote output above"
     fi
 
     set_state "config_done" "true"
-    ok "OpenClaw configured with model: ${MODEL} (API key verified)"
+    ok "OpenClaw configured with model: ${MODEL} (end-to-end verified)"
 fi
 
 # ---------------------------------------------------------------------------
