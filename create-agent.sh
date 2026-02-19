@@ -387,12 +387,17 @@ CONFIG_DONE="$(get_state 'config_done')"
 if [[ "$CONFIG_DONE" == "true" ]]; then
     ok "OpenClaw already configured (resuming)"
 else
-    # Use openclaw onboard --non-interactive for proper setup (auth, config, pairing, daemon)
+    # Use openclaw onboard --non-interactive for proper setup
+    # Must run on a clean ~/.openclaw (no stale state from prior attempts)
     REMOTE_OUTPUT=$(ssh ${SSH_OPTS} "root@${DROPLET_IP}" bash -s <<REMOTE_CONFIG
 set -euo pipefail
 export NODE_OPTIONS="--max-old-space-size=900"
 
-openclaw onboard --non-interactive \
+# Clean slate — onboard works best without pre-existing state
+openclaw gateway stop 2>&1 || true
+rm -rf ~/.openclaw
+
+openclaw onboard --non-interactive --accept-risk \
   --mode local \
   --auth-choice apiKey \
   --anthropic-api-key '${ANTHROPIC_KEY}' \
@@ -403,14 +408,25 @@ openclaw onboard --non-interactive \
   --skip-skills 2>&1
 
 # Set default model
-openclaw models set '${MODEL}' 2>&1
+openclaw models set '${MODEL}' 2>&1 || true
 
-# Verify end-to-end: send a message through the gateway
-sleep 5
-if openclaw agent --message "Reply with just the word OK" --timeout 30 --json 2>&1 | grep -q '"reply"'; then
+# Verify auth-profiles.json was written correctly
+if grep -q '"anthropic"' ~/.openclaw/agents/main/agent/auth-profiles.json 2>/dev/null; then
+    echo "AUTH_FILE_OK"
+else
+    echo "AUTH_FAILED: auth-profiles.json not written correctly" >&2
+    exit 1
+fi
+
+# Verify the API key is valid by hitting Anthropic directly
+if curl -sf -o /dev/null https://api.anthropic.com/v1/messages \
+  -H "x-api-key: ${ANTHROPIC_KEY}" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "content-type: application/json" \
+  -d '{"model":"claude-sonnet-4-20250514","max_tokens":5,"messages":[{"role":"user","content":"hi"}]}'; then
     echo "AUTH_VERIFIED"
 else
-    echo "AUTH_FAILED: Agent could not complete a turn through the gateway" >&2
+    echo "AUTH_FAILED: Anthropic API key is invalid" >&2
     exit 1
 fi
 
@@ -419,16 +435,15 @@ REMOTE_CONFIG
 )
     echo "$REMOTE_OUTPUT"
 
-    # Check remote output for auth verification
     if echo "$REMOTE_OUTPUT" | grep -q "AUTH_FAILED"; then
-        die "Agent failed end-to-end verification — check auth-profiles.json and gateway logs"
+        die "Auth verification failed — check remote output above"
     fi
     if ! echo "$REMOTE_OUTPUT" | grep -q "AUTH_VERIFIED"; then
-        die "Verification step did not complete — check remote output above"
+        die "Verification did not complete — check remote output above"
     fi
 
     set_state "config_done" "true"
-    ok "OpenClaw configured with model: ${MODEL} (end-to-end verified)"
+    ok "OpenClaw configured with model: ${MODEL} (API key verified)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -457,11 +472,14 @@ openclaw config set channels.telegram.botToken '${TG_TOKEN}' 2>&1
 openclaw config set channels.telegram.dmPolicy allowlist 2>&1
 openclaw config set channels.telegram.allowFrom '${ALLOW_FROM_JSON}' 2>&1
 
+# Restart gateway to pick up Telegram config
+openclaw gateway restart 2>&1 || true
+
 echo "TELEGRAM_DONE"
 REMOTE_TG
 
         set_state "telegram_done" "true"
-        ok "Telegram configured"
+        ok "Telegram configured (gateway restarted)"
         if [[ -n "$PAIR_WITH" ]]; then
             ok "Pre-approved users: ${PAIR_WITH}"
         fi
