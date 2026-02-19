@@ -5,32 +5,33 @@
   "tagline": "Programmatically provision new OpenClaw agents on DigitalOcean",
   "description": "Designed for an AI manager agent (or human with CLI access) running on a Linux machine. Given a YAML config file with the agent's name, region, and channels, the script creates a DigitalOcean droplet, installs OpenClaw, configures Telegram/Gmail, and stores all secrets in 1Password. The manager must have doctl, op (1Password CLI), and SSH access set up before running.",
   "category": "automation",
-  "tags": ["openclaw", "digitalocean", "1password", "provisioning", "automation"],
+  "tags": [
+    "openclaw",
+    "digitalocean",
+    "1password",
+    "provisioning",
+    "automation"
+  ],
   "difficulty": "intermediate",
   "status": "beta",
-
   "repository": {
     "owner": "hal-ai-agent",
     "name": "openclaw-manager",
     "branch": "main",
     "path": ""
   },
-
   "credits": {
     "name": "OpenClaw",
     "description": "Builds on the openclaw-droplet rig by marshellis. This rig automates the provisioning process for programmatic use by manager agents.",
     "url": "https://docs.openclaw.ai/platforms/digitalocean",
     "repository": "https://github.com/openclaw/openclaw"
   },
-
   "whatItDoes": "Given an agent configuration file, this rig creates a new DigitalOcean droplet, installs OpenClaw, configures channels (Telegram, Gmail), and stores all secrets in 1Password. The manager reads shared secrets (like Anthropic API keys) from 1Password and creates agent-specific entries prefixed with the agent name. After provisioning, the new agent is running and reachable via its configured channels.",
-
   "useCases": [
     "Spin up a new AI team member with one command",
     "Manage a fleet of OpenClaw agents across projects",
     "Reproducible agent provisioning with secrets in 1Password"
   ],
-
   "prerequisites": [
     {
       "name": "Linux machine with SSH",
@@ -60,7 +61,6 @@
       "description": "Create a bot BEFORE running the script: open Telegram, message @BotFather, send /newbot, pick a name and username. Copy the token -- the script will prompt you to paste it during setup."
     }
   ],
-
   "installerActions": [
     {
       "label": "Install manager tools",
@@ -68,30 +68,29 @@
     },
     {
       "label": "Download rig files",
-      "detail": "Downloads create-agent.sh and templates to ~/.openclaw-manager/rig/"
+      "detail": "Downloads create-agent.sh, preflight.sh, and templates to ~/.openclaw-manager/rig/"
     }
   ],
-
   "verificationSteps": [
     {
-      "instruction": "Verify prerequisites: run 'doctl compute ssh-key list' and 'op vault list'",
-      "expectedResult": "doctl shows at least one SSH key. op shows your vault (e.g., AI-Agents)."
+      "instruction": "Run preflight.sh to verify all prerequisites",
+      "expectedResult": "All checks pass: doctl authenticated, op authenticated, SSH keys found, Anthropic key in vault, 0 failures."
     },
     {
-      "instruction": "Create a minimal agent config (name + vault + test_prompt only) and run create-agent.sh",
-      "expectedResult": "A new droplet is created, OpenClaw is installed, and the test prompt gets a response."
+      "instruction": "Run preflight.sh with an agent config file",
+      "expectedResult": "Config validates: name set, vault accessible, channel config valid."
     },
     {
-      "instruction": "Check 1Password vault after provisioning",
-      "expectedResult": "New entries prefixed with the agent name appear (e.g., 'Eva - Anthropic API Key', 'Eva - Droplet Info')."
-    },
-    {
-      "instruction": "If Telegram was configured, message the bot",
-      "expectedResult": "The bot responds and prompts you to pair."
+      "instruction": "Run create-agent.sh with the config",
+      "expectedResult": "Droplet created, OpenClaw installed, agent responds to test prompt."
     }
   ],
-
   "files": [
+    {
+      "name": "preflight.sh",
+      "description": "Verify all prerequisites before provisioning. Run this first.",
+      "path": "preflight.sh"
+    },
     {
       "name": "install.sh",
       "description": "Installs manager prerequisites (doctl, op, jq, yq) and downloads rig files",
@@ -113,7 +112,6 @@
       "path": "templates/SOUL.md"
     }
   ],
-
   "install": {
     "bash": "curl -fsSL https://raw.githubusercontent.com/hal-ai-agent/openclaw-manager/main/install.sh | bash"
   }

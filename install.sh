@@ -97,6 +97,8 @@ RIG_DIR="${HOME}/.openclaw-manager/rig"
 mkdir -p "${RIG_DIR}/templates"
 
 BASE_URL="https://raw.githubusercontent.com/hal-ai-agent/openclaw-manager/main"
+curl -fsSL "${BASE_URL}/preflight.sh" -o "${RIG_DIR}/preflight.sh"
+chmod +x "${RIG_DIR}/preflight.sh"
 curl -fsSL "${BASE_URL}/create-agent.sh" -o "${RIG_DIR}/create-agent.sh"
 chmod +x "${RIG_DIR}/create-agent.sh"
 curl -fsSL "${BASE_URL}/templates/agent-config.yaml" -o "${RIG_DIR}/templates/agent-config.yaml"
