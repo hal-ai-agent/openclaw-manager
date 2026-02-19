@@ -1,0 +1,101 @@
+{
+  "name": "OpenClaw Manager",
+  "slug": "openclaw-manager",
+  "version": "0.1.0",
+  "tagline": "Programmatically provision new OpenClaw agents on DigitalOcean",
+  "description": "A rig for spinning up new OpenClaw instances from an existing Linux machine. Uses doctl to create droplets, 1Password CLI to manage secrets, and SSH to configure the new agent. Designed to be run by an AI manager agent or a human with CLI access.",
+  "category": "automation",
+  "tags": [
+    "openclaw",
+    "digitalocean",
+    "1password",
+    "provisioning",
+    "automation"
+  ],
+  "difficulty": "intermediate",
+  "status": "beta",
+  "repository": {
+    "owner": "hal-ai-agent",
+    "name": "openclaw-manager",
+    "branch": "main",
+    "path": ""
+  },
+  "credits": {
+    "name": "OpenClaw",
+    "description": "Builds on the openclaw-droplet rig by marshellis. This rig automates the provisioning process for programmatic use by manager agents.",
+    "url": "https://docs.openclaw.ai/platforms/digitalocean",
+    "repository": "https://github.com/openclaw/openclaw"
+  },
+  "whatItDoes": "Given an agent configuration file, this rig creates a new DigitalOcean droplet, installs OpenClaw, configures channels (Telegram, Gmail), and stores all secrets in 1Password. The manager reads shared secrets (like Anthropic API keys) from 1Password and creates agent-specific entries prefixed with the agent name. After provisioning, the new agent is running and reachable via its configured channels.",
+  "useCases": [
+    "Spin up a new AI team member with one command",
+    "Manage a fleet of OpenClaw agents across projects",
+    "Reproducible agent provisioning with secrets in 1Password"
+  ],
+  "prerequisites": [
+    {
+      "name": "Linux machine",
+      "description": "The manager runs from an existing Linux box (e.g., another OpenClaw instance)"
+    },
+    {
+      "name": "doctl",
+      "description": "DigitalOcean CLI, authenticated with an API token",
+      "link": "https://docs.digitalocean.com/reference/doctl/how-to/install/"
+    },
+    {
+      "name": "1Password CLI (op)",
+      "description": "Authenticated with access to the secrets vault",
+      "link": "https://developer.1password.com/docs/cli/get-started/"
+    },
+    {
+      "name": "SSH key in DigitalOcean",
+      "description": "An SSH key registered with DigitalOcean for droplet access"
+    },
+    {
+      "name": "Anthropic API Key",
+      "description": "Stored in 1Password (shared across agents or per-agent)",
+      "link": "https://console.anthropic.com/"
+    }
+  ],
+  "installerActions": [
+    {
+      "label": "Install manager tools",
+      "detail": "Installs doctl, op, and jq if not present. Verifies authentication for each."
+    }
+  ],
+  "verificationSteps": [
+    {
+      "instruction": "Run create-agent.sh with a test config",
+      "expectedResult": "A new droplet is created, OpenClaw is installed, and the agent responds to a test message"
+    },
+    {
+      "instruction": "Check 1Password vault for new agent entries",
+      "expectedResult": "Agent-specific secrets are created with the correct prefix"
+    }
+  ],
+  "files": [
+    {
+      "name": "install.sh",
+      "description": "Installs manager prerequisites (doctl, op, jq)",
+      "path": "rigs/openclaw-manager/install.sh"
+    },
+    {
+      "name": "create-agent.sh",
+      "description": "Main provisioning script -- creates a new OpenClaw agent",
+      "path": "rigs/openclaw-manager/create-agent.sh"
+    },
+    {
+      "name": "templates/agent-config.yaml",
+      "description": "Example agent configuration file",
+      "path": "rigs/openclaw-manager/templates/agent-config.yaml"
+    },
+    {
+      "name": "templates/SOUL.md",
+      "description": "Default SOUL.md template for new agents",
+      "path": "rigs/openclaw-manager/templates/SOUL.md"
+    }
+  ],
+  "install": {
+    "bash": "curl -fsSL https://raw.githubusercontent.com/hal-ai-agent/openclaw-manager/main/install.sh | bash"
+  }
+}

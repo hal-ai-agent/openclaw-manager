@@ -1,0 +1,44 @@
+# Agent Configuration
+# -------------------
+# This file defines a new OpenClaw agent to provision.
+# The manager reads this file and creates everything needed.
+
+# Identity
+name: Eva                          # Agent name (used for 1Password prefixes, hostname, etc.)
+hostname: openclaw-eva             # Droplet hostname
+
+# Infrastructure
+region: nyc3                       # DigitalOcean region (nyc1, nyc3, sfo3, lon1, ams3, sgp1, fra1)
+size: s-1vcpu-2gb                  # Droplet size (s-1vcpu-1gb = $6/mo, s-1vcpu-2gb = $12/mo)
+ssh_key_name: ""                   # DO SSH key name (leave empty to auto-detect or create)
+
+# AI Model
+model: anthropic/claude-sonnet-4-20250514   # Default model for the agent
+
+# 1Password
+vault: AI-Agents                   # 1Password vault for storing agent secrets
+anthropic_key_item: ""             # 1Password item name for Anthropic key (leave empty to use shared key)
+
+# Channels (comment out to skip)
+channels:
+  telegram:
+    bot_name: ""                   # Telegram bot display name (e.g., "Eva AI")
+    bot_username: ""               # Telegram bot username (e.g., "eva_dimagi_bot")
+    # If bot_token is empty, you must create the bot via @BotFather first
+    # and store the token in 1Password as "<name> - Telegram Bot Token"
+    bot_token_item: ""             # 1Password item name (leave empty to prompt)
+
+  gmail:
+    email: ""                      # Gmail address for the agent (e.g., "eva@dimagi-ai.com")
+    gcp_project: ""                # Google Cloud project ID for Pub/Sub
+    # Gmail requires OAuth -- the manager will guide you through gog auth
+
+# Workspace files (optional -- paths to files to copy into the agent's workspace)
+workspace_files:
+  # soul: ./custom-soul.md         # Custom SOUL.md (default template used if omitted)
+  # agents: ./custom-agents.md     # Custom AGENTS.md
+  # tools: ./custom-tools.md       # Custom TOOLS.md
+
+# Post-provision
+pair_with: ""                      # Telegram user ID to auto-pair with (e.g., "7766739556")
+test_prompt: "Say hello in 3 words"  # Prompt to verify the agent is working
